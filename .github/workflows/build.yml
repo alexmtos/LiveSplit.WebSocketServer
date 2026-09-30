@@ -1,0 +1,53 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly build against the latest LiveSplit to catch upstream API changes early.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      livesplit-ref:
+        description: "LiveSplit branch, tag or commit to build against"
+        required: false
+        default: "master"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout LiveSplit
+        uses: actions/checkout@v4
+        with:
+          repository: LiveSplit/LiveSplit
+          ref: ${{ github.event.inputs.livesplit-ref || 'master' }}
+          path: LiveSplit
+
+      - name: Checkout LiveSplit dependencies
+        working-directory: LiveSplit
+        run: git submodule update --init --depth 1 lib/SpeedrunComSharp
+
+      # The component is checked out where LiveSplit expects its components,
+      # so the Directory.Build.props of LiveSplit provides LsSrcPath/LsLibPath.
+      - name: Checkout component
+        uses: actions/checkout@v4
+        with:
+          path: LiveSplit/components/LiveSplit.WebSocketServer
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build
+        working-directory: LiveSplit/components/LiveSplit.WebSocketServer
+        run: dotnet build LiveSplit.WebSocketServer.slnx -c Release
+
+      - name: Upload component
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveSplit.WebSocketServer
+          path: LiveSplit/artifacts/build/release/Components/LiveSplit.WebSocketServer.dll
+          if-no-files-found: error
