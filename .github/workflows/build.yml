@@ -45,6 +45,10 @@ jobs:
         working-directory: LiveSplit/components/LiveSplit.WebSocketServer
         run: dotnet build LiveSplit.WebSocketServer.slnx -c Release
 
+      - name: Test
+        working-directory: LiveSplit/components/LiveSplit.WebSocketServer
+        run: dotnet test LiveSplit.WebSocketServer.slnx -c Release --no-build
+
       - name: Upload component
         uses: actions/upload-artifact@v4
         with:
