@@ -40,7 +40,6 @@ namespace LiveSplit.UI.Components
             json.loadingTimes = ConvertTimeSpanToJson(state.LoadingTimes);
             json.isGameTimeInitialized = state.IsGameTimeInitialized;
             json.isGameTimePaused = state.IsGameTimePaused;
-            json.currentTime = ConvertTimeToJson(state.CurrentTime);
             json.attemptStarted = ConvertAtomicDateTimeToJson(state.AttemptStarted);
             json.attemptEnded = ConvertAtomicDateTimeToJson(state.AttemptEnded);
             json.pauseTime = ConvertTimeSpanToJson(state.PauseTime);

@@ -20,7 +20,7 @@ namespace LiveSplit.UI.Components
 
         public string UpdateURL => null;
 
-        public Version Version => Version.Parse("1.1.0");
+        public Version Version => typeof(ServerFactory).Assembly.GetName().Version;
 
         public string XMLURL => null;
     }

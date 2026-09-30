@@ -1,0 +1,25 @@
+<Project>
+
+  <!-- Meant to be used as a submodule of the LiveSplit repository (components/LiveSplit.WebSocketServer). -->
+  <!-- Imports `Directory.Build.props` from the directory above, if it exists. -->
+  <!-- If it does not, the properties `LsSrcPath` and `LsLibPath` must be provided via the command line. -->
+  <!-- Example: `dotnet build -p:LsSrcPath=path/to/LiveSplit/src -p:LsLibPath=path/to/LiveSplit/lib` -->
+
+  <Import Project="$(MSBuildThisFileDirectory)/../Directory.Build.props"
+    Condition="Exists('$(MSBuildThisFileDirectory)/../Directory.Build.props')" />
+
+  <PropertyGroup>
+    <RootPath>$(MSBuildThisFileDirectory)</RootPath>
+
+    <SrcPath>$(RootPath)/src</SrcPath>
+    <TestPath>$(RootPath)/test</TestPath>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <LangVersion>14</LangVersion>
+
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+</Project>
