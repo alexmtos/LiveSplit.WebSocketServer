@@ -23,6 +23,7 @@
 
 - New components only accept connections from this computer. Existing layouts keep accepting connections from the network.
 - Commands and state reads run on LiveSplit's UI thread instead of the connection's thread.
+- Each client has an ordered outgoing queue: messages always arrive in order, ticks are skipped for slow clients and clients that stop reading are disconnected.
 - Icons are encoded once and only sent to clients that want them (always to version 1 clients).
 - `pause` no longer starts the timer when it is not running.
 - The menu entries are now *Start/Stop WebSocket Server (JSON)*, to tell them apart from LiveSplit's built-in server.

@@ -1,9 +1,11 @@
 using LiveSplit.WsServer.Commands;
+using LiveSplit.WsServer.Infrastructure;
 using LiveSplit.WsServer.Protocol;
 using LiveSplit.WsServer.State;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Threading;
 using System.Threading.Tasks;
 using WebSocketSharp;
 using WebSocketSharp.Server;
@@ -48,6 +50,14 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
 
     // Set once in OnOpen, before any message is processed.
     private volatile bool authorized;
+
+    // Set on the UI thread once the greeting is queued; broadcasts (also on the UI thread) wait for it.
+    private volatile bool greeted;
+
+    private const int MaxQueuedMessages = 1000;
+    private const int MaxQueuedBeforeDroppingTicks = 8;
+    private readonly Queue<string> outgoing = new();
+    private bool draining;
 
     public ClientSession(ServerRuntime runtime)
     {
@@ -98,7 +108,11 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
         return difference == 0;
     }
 
-    public bool IsOpen => authorized && State == WebSocketState.Open;
+    /// <summary>
+    ///     Whether the session is authorized, greeted and connected, so it can receive broadcasts.
+    ///     Only meaningful on the UI thread.
+    /// </summary>
+    public bool IsOpen => authorized && greeted && State == WebSocketState.Open;
 
     protected override void OnOpen()
     {
@@ -129,19 +143,21 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
             ProtocolVersion = version;
         }
 
-        Reply(runtime.Dispatcher.InvokeAsync(() =>
+        // The greeting is queued on the UI thread, like broadcasts, so no event can overtake it.
+        CompleteOnFailure(runtime.Dispatcher.InvokeAsync(() =>
         {
-            if (ProtocolVersion == Versions.Legacy)
-            {
-                return Json.Serialize(new
+            string greeting = ProtocolVersion == Versions.Legacy
+                ? Json.Serialize(new
                 {
                     open = new { response = "success" },
                     state = runtime.Snapshots.Build(runtime.State, SnapshotOptions.Legacy),
-                });
-            }
+                })
+                : Json.Serialize(SessionCommands.CreateHello(new CommandContext(runtime, this), includeState: true));
 
-            return Json.Serialize(SessionCommands.CreateHello(new CommandContext(runtime, this), includeState: true));
-        }));
+            SendText(greeting);
+            greeted = true;
+            return true;
+        }), null);
     }
 
     protected override void OnMessage(MessageEventArgs e)
@@ -166,19 +182,17 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
             return;
         }
 
-        Reply(runtime.Dispatcher.InvokeAsync(() => Execute(request)).ContinueWith(task =>
+        // The response is queued on the UI thread, right after any event the action raised.
+        CompleteOnFailure(runtime.Dispatcher.InvokeAsync(() =>
         {
-            if (task.Status == TaskStatus.RanToCompletion)
+            string response = Execute(request);
+            if (response != null)
             {
-                return task.Result;
+                SendText(response);
             }
 
-            // The UI thread was not reachable.
-            Exception error = task.Exception?.GetBaseException();
-            return ProtocolVersion == Versions.Legacy && LegacyActions.Contains(request.Action)
-                ? null
-                : Json.Serialize(ResponseMessage.Failure(request.Id, request.Action, ErrorCodes.Unavailable, error?.Message ?? "LiveSplit is not available."));
-        }, TaskScheduler.Default));
+            return true;
+        }), request);
     }
 
     /// <summary>
@@ -221,38 +235,102 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
         }
     }
 
-    private void Reply(Task<string> message)
+    /// <summary>
+    ///     Reports that the UI thread could not run the work (LiveSplit is closing).
+    /// </summary>
+    private void CompleteOnFailure(Task<bool> work, Request request)
     {
-        message.ContinueWith(task =>
+        work.ContinueWith(task =>
         {
-            if (task.Status == TaskStatus.RanToCompletion && task.Result != null)
+            Exception error = task.Exception?.GetBaseException();
+            if (error is not LiveSplitUnavailableException)
             {
-                SendText(task.Result);
+                LsLog.Error(error);
             }
-            else if (task.IsFaulted)
+
+            if (request != null && !(ProtocolVersion == Versions.Legacy && LegacyActions.Contains(request.Action)))
             {
-                LsLog.Error(task.Exception.GetBaseException());
+                SendText(Json.Serialize(ResponseMessage.Failure(request.Id, request.Action, ErrorCodes.Unavailable, "LiveSplit is not available.")));
             }
-        }, TaskScheduler.Default);
+        }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }
 
     /// <summary>
-    ///     Queues a text message without blocking the caller. Safe to call from any thread.
+    ///     Queues a text message. Messages are sent one at a time, in the order they were
+    ///     queued, by a single worker. Safe to call from any thread and never blocks.
     /// </summary>
-    internal void SendText(string message)
+    /// <param name="droppable">
+    ///     The message may be skipped when the client is not keeping up (ticks).
+    /// </param>
+    internal void SendText(string message, bool droppable = false)
     {
-        if (!IsOpen)
+        if (!authorized || State != WebSocketState.Open)
         {
             return;
         }
 
-        try
+        lock (outgoing)
         {
-            SendAsync(message, null);
+            if (droppable && outgoing.Count >= MaxQueuedBeforeDroppingTicks)
+            {
+                return;
+            }
+
+            if (outgoing.Count >= MaxQueuedMessages)
+            {
+                // The client stopped reading; do not let its messages pile up forever.
+                outgoing.Clear();
+                try
+                {
+                    Context.WebSocket.CloseAsync(CloseStatusCode.PolicyViolation, "Too many pending messages");
+                }
+                catch (Exception)
+                {
+                    // Already closing.
+                }
+
+                return;
+            }
+
+            outgoing.Enqueue(message);
+            if (draining)
+            {
+                return;
+            }
+
+            draining = true;
         }
-        catch (InvalidOperationException)
+
+        ThreadPool.QueueUserWorkItem(_ => Drain());
+    }
+
+    private void Drain()
+    {
+        while (true)
         {
-            // The connection closed in the meantime.
+            string message;
+            lock (outgoing)
+            {
+                if (outgoing.Count == 0)
+                {
+                    draining = false;
+                    return;
+                }
+
+                message = outgoing.Dequeue();
+            }
+
+            try
+            {
+                if (State == WebSocketState.Open)
+                {
+                    Send(message);
+                }
+            }
+            catch (Exception)
+            {
+                // The connection closed in the meantime.
+            }
         }
     }
 }

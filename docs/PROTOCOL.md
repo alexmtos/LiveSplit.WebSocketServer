@@ -140,6 +140,10 @@ A small message for clients that draw a running timer. It is sent at most every 
 
 Ticks follow LiveSplit's refresh rate, so they cannot be more frequent than LiveSplit redraws.
 
+### Delivery
+
+Messages to a client are sent one at a time, in order: the greeting first, then events and responses in the order they happened (an action's response comes after the events it caused). Ticks are skipped while a client has more than a few messages waiting, and a client that stops reading is disconnected once 1000 messages are waiting.
+
 ## Protocol version 1
 
 Version 1 behaves exactly as before version 2.0 of this component:
@@ -324,13 +328,13 @@ Always allowed. Times are milliseconds, missing values are `null`.
 | `getcomparisons` |  | All comparisons. |
 | `getsplitindex` |  | The index of the current split (-1 while not running). |
 | `getsplitcount` |  | The number of splits. |
-| `getsplitname` |  | The name of a split. Args: { index } (negative indices count from the end). |
+| `getsplitname` |  | The name of a split. Args: { index? } (negative indices count from the end; the current split by default). |
 | `getcurrentsplitname` |  | The name of the current split. |
 | `getprevioussplitname` | `getlastsplitname` | The name of the previous split. |
 | `getnextsplitname` | `getupcomingsplitname` | The name of the next split. |
 | `getprevioussplittime` | `getlastsplittime` | The split time of the previous split. |
 | `getcomparisonsplittime` | `getcurrentsplittime` | The comparison time of the current split. Args: { comparison? }. |
-| `getsegment` |  | Everything about one split. Args: { index }. |
+| `getsegment` |  | Everything about one split. Args: { index? } (the current split by default). |
 | `getgamename` |  | The game name. |
 | `getcategoryname` |  | The category name. |
 | `getcategoryvariables` |  | Region, platform, emulator and speedrun.com variables of the run. |

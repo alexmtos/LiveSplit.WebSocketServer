@@ -172,7 +172,7 @@ public sealed class WebSocketHost : IDisposable
 
             session.LastTick = now;
             message ??= Json.Serialize(BuildTick());
-            session.SendText(message);
+            session.SendText(message, droppable: true);
         }
     }
 

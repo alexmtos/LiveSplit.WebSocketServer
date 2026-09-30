@@ -85,6 +85,34 @@ public sealed class ServerTests : IDisposable
             throw new InvalidOperationException("No matching message received.");
         }
 
+        public bool TryReceive(TimeSpan wait, out JsonElement message)
+        {
+            message = default;
+            if (!messages.TryTake(out string text, wait))
+            {
+                return false;
+            }
+
+            message = JsonDocument.Parse(text).RootElement;
+            return true;
+        }
+
+        public bool WaitUntilClosed(TimeSpan wait)
+        {
+            DateTime end = DateTime.UtcNow + wait;
+            while (DateTime.UtcNow < end)
+            {
+                if (socket.ReadyState is WebSocketState.Closed or WebSocketState.Closing)
+                {
+                    return true;
+                }
+
+                System.Threading.Thread.Sleep(20);
+            }
+
+            return false;
+        }
+
         public bool NothingReceived(TimeSpan wait)
         {
             return !messages.TryTake(out _, wait);
@@ -207,6 +235,25 @@ public sealed class ServerTests : IDisposable
     }
 
     [Fact]
+    public void MessagesArriveInOrder()
+    {
+        using var client = new Client(port, "?protocol=2");
+        client.Receive();
+        client.Send("{\"action\": \"subscribe\", \"args\": {\"includeState\": false}}");
+        client.ReceiveWhere(x => Type(x) == "response");
+
+        for (int i = 0; i < 200; i++)
+        {
+            host.Broadcast(ServerEvents.Scroll, i);
+        }
+
+        for (int i = 0; i < 200; i++)
+        {
+            Assert.Equal(i, client.Receive().GetProperty("data").GetInt32());
+        }
+    }
+
+    [Fact]
     public void Ticks()
     {
         using var client = new Client(port, "?protocol=2");
@@ -244,11 +291,15 @@ public sealed class ServerTests : IDisposable
 
         using (var rejected = new Client(port, "?protocol=2&token=wrong"))
         {
-            JsonElement error = rejected.Receive();
-            Assert.Equal("unauthorized", error.GetProperty("error").GetProperty("code").GetString());
+            // The server sends the error and closes the connection. websocket-sharp clients drop
+            // messages that are still queued when the close arrives, so the error is optional here.
+            if (rejected.TryReceive(TimeSpan.FromSeconds(1), out JsonElement error))
+            {
+                Assert.Equal("unauthorized", error.GetProperty("error").GetProperty("code").GetString());
+            }
 
-            rejected.Send("start");
-            Assert.True(rejected.NothingReceived(TimeSpan.FromMilliseconds(300)));
+            Assert.True(rejected.WaitUntilClosed(Timeout));
+            Assert.Empty(host.Sessions);
             Assert.Equal(TimerPhase.NotRunning, ls.State.CurrentPhase);
         }
 

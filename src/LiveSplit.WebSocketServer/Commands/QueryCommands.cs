@@ -41,8 +41,8 @@ public static class QueryCommands
         // Splits
         d.Register("getsplitindex", CommandAccess.Read, "The index of the current split (-1 while not running).", (c, a) => c.State.CurrentSplitIndex);
         d.Register("getsplitcount", CommandAccess.Read, "The number of splits.", (c, a) => c.State.Run.Count);
-        d.Register("getsplitname", CommandAccess.Read, "The name of a split. Args: { index } (negative indices count from the end).",
-            (c, a) => SplitName(c, a.GetInt("index") ?? c.State.CurrentSplitIndex));
+        d.Register("getsplitname", CommandAccess.Read, "The name of a split. Args: { index? } (negative indices count from the end; the current split by default).",
+            (c, a) => a.GetInt("index") is int index ? c.State.Run[RequireSplitIndex(c, index)].Name : c.State.CurrentSplit?.Name);
         d.Register("getcurrentsplitname", CommandAccess.Read, "The name of the current split.", (c, a) => c.State.CurrentSplit?.Name);
         d.Register("getprevioussplitname", CommandAccess.Read, "The name of the previous split.",
             (c, a) => c.State.CurrentSplitIndex > 0 ? c.State.Run[c.State.CurrentSplitIndex - 1].Name : null, "getlastsplitname");
@@ -54,7 +54,7 @@ public static class QueryCommands
         d.Register("getcomparisonsplittime", CommandAccess.Read, "The comparison time of the current split. Args: { comparison? }.",
             (c, a) => c.State.CurrentSplit != null ? Ms(c.State.CurrentSplit.Comparisons[Comparison(c, a)][c.State.CurrentTimingMethod]) : null,
             "getcurrentsplittime");
-        d.Register("getsegment", CommandAccess.Read, "Everything about one split. Args: { index }.", GetSegment);
+        d.Register("getsegment", CommandAccess.Read, "Everything about one split. Args: { index? } (the current split by default).", GetSegment);
 
         // Run
         d.Register("getgamename", CommandAccess.Read, "The game name.", (c, a) => c.State.Run.GameName);
@@ -63,7 +63,8 @@ public static class QueryCommands
         d.Register("getattemptcount", CommandAccess.Read, "The number of attempts.", (c, a) => c.State.Run.AttemptCount);
         d.Register("getcompletedcount", CommandAccess.Read, "The number of finished attempts.", (c, a) => TimerCalculations.FinishedCount(c.State.Run));
         d.Register("getcustomvariablevalue", CommandAccess.Read, "The value of a custom variable. Args: { name }.",
-            (c, a) => c.State.Run.Metadata.CustomVariableValue(a.RequireString("name")));
+            // RunMetadata.CustomVariableValue would create the variable, so only look it up.
+            (c, a) => c.State.Run.Metadata.CustomVariables.TryGetValue(a.RequireString("name"), out CustomVariable variable) ? variable.Value : null);
         d.Register("getcustomvariables", CommandAccess.Read, "All custom variables.",
             (c, a) => c.State.Run.Metadata.CustomVariables.ToDictionary(x => x.Key, x => x.Value.Value));
         d.Register("getsplitspath", CommandAccess.Read, "The path of the splits file.", (c, a) => NullIfEmpty(c.State.Run.FilePath));
@@ -111,14 +112,13 @@ public static class QueryCommands
         return resolved;
     }
 
-    private static object SplitName(CommandContext c, int index)
-    {
-        return c.State.Run[RequireSplitIndex(c, index)].Name;
-    }
-
     private static object GetSegment(CommandContext c, CommandArgs a)
     {
-        int index = RequireSplitIndex(c, a.GetInt("index") ?? c.State.CurrentSplitIndex);
+        int index = a.GetInt("index") is int requested
+            ? RequireSplitIndex(c, requested)
+            : c.State.CurrentSplit != null
+                ? c.State.CurrentSplitIndex
+                : throw CommandException.InvalidArgs("There is no current split while the timer is not running; pass an index.");
         ISegment segment = c.State.Run[index];
         return new
         {

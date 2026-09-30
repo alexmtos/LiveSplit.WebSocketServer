@@ -311,6 +311,29 @@ public class QueryCommandTests
     }
 
     [Fact]
+    public void ReadingAnUnknownCustomVariableDoesNotCreateIt()
+    {
+        var ls = new TestLiveSplit();
+        ls.Options.ReadOnly = true;
+
+        Assert.Null(ls.Execute("getcustomvariablevalue nope"));
+        Assert.False(ls.State.Run.Metadata.CustomVariables.ContainsKey("nope"));
+    }
+
+    [Fact]
+    public void SplitQueriesDefaultToTheCurrentSplit()
+    {
+        var ls = new TestLiveSplit(segmentCount: 3);
+
+        // -1 while not running must not be read as "the last split".
+        Assert.Null(ls.Execute("getsplitname"));
+        Assert.Equal(ErrorCodes.InvalidArgs, ls.ExecuteFailing("getsegment").Code);
+
+        ls.StartTimer();
+        Assert.Equal("Split 1", ls.Execute("getsplitname"));
+    }
+
+    [Fact]
     public void TimesAreMilliseconds()
     {
         var ls = new TestLiveSplit(segmentCount: 3);

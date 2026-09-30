@@ -3,6 +3,7 @@ using LiveSplit.Options;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace LiveSplit.WsServer.State;
 
@@ -99,7 +100,7 @@ public sealed class StateSnapshotBuilder
         };
     }
 
-    private static MetadataSnapshot BuildMetadata(RunMetadata metadata)
+    private MetadataSnapshot BuildMetadata(RunMetadata metadata)
     {
         var snapshot = new MetadataSnapshot
         {
@@ -129,13 +130,7 @@ public sealed class StateSnapshotBuilder
                 if (metadata.CategoryAvailable)
                 {
                     snapshot.CategoryId = metadata.Category?.ID;
-                    foreach (KeyValuePair<SpeedrunComSharp.Variable, SpeedrunComSharp.VariableValue> variable in metadata.VariableValues)
-                    {
-                        if (variable.Key != null && variable.Value != null)
-                        {
-                            snapshot.Variables[variable.Key.ID] = variable.Value.Value;
-                        }
-                    }
+                    snapshot.Variables = SpeedrunComVariables(metadata);
                 }
             }
         }
@@ -145,6 +140,63 @@ public sealed class StateSnapshotBuilder
         }
 
         return snapshot;
+    }
+
+    private readonly object variablesLock = new();
+    private string variablesKey;
+    private Dictionary<string, string> variables = [];
+    private bool variablesLoading;
+
+    /// <summary>
+    ///     speedrun.com variable ids and values. Resolving them may download the game's variables
+    ///     from speedrun.com, so it happens in the background; until then the result is empty.
+    /// </summary>
+    private Dictionary<string, string> SpeedrunComVariables(RunMetadata metadata)
+    {
+        string key = string.Join("\n", new[] { metadata.LiveSplitRun.GameName, metadata.LiveSplitRun.CategoryName }
+            .Concat((metadata.VariableValueNames ?? new Dictionary<string, string>()).OrderBy(x => x.Key).Select(x => x.Key + "=" + x.Value)));
+
+        lock (variablesLock)
+        {
+            if (key == variablesKey)
+            {
+                return new Dictionary<string, string>(variables);
+            }
+
+            if (!variablesLoading)
+            {
+                variablesLoading = true;
+                Task.Run(() => LoadSpeedrunComVariables(metadata, key));
+            }
+
+            return [];
+        }
+    }
+
+    private void LoadSpeedrunComVariables(RunMetadata metadata, string key)
+    {
+        var result = new Dictionary<string, string>();
+        try
+        {
+            foreach (KeyValuePair<SpeedrunComSharp.Variable, SpeedrunComSharp.VariableValue> variable in metadata.VariableValues)
+            {
+                if (variable.Key != null && variable.Value != null)
+                {
+                    result[variable.Key.ID] = variable.Value.Value;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // speedrun.com is unreachable; try again when the run changes.
+        }
+
+        lock (variablesLock)
+        {
+            variablesKey = key;
+            variables = result;
+            variablesLoading = false;
+        }
     }
 
     private static AutoSplitterSnapshot BuildAutoSplitter(AutoSplitter autoSplitter)
