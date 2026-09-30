@@ -1,8 +1,13 @@
-using LiveSplit.Model;
-using LiveSplit.UI.Components;
-using LiveSplit.Web;
+using LsLog = LiveSplit.Options.Log;
+using LiveSplit.WsServer.Commands;
 using LiveSplit.WsServer.Infrastructure;
+using LiveSplit.WsServer.Protocol;
+using LiveSplit.WsServer.State;
+using Versions = LiveSplit.WsServer.Protocol.ProtocolVersion;
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text.Json;
 using System.Threading.Tasks;
 using WebSocketSharp;
 using WebSocketSharp.Server;
@@ -10,141 +15,180 @@ using WebSocketSharp.Server;
 namespace LiveSplit.WsServer.Server;
 
 /// <summary>
-///     One connected WebSocket client. Messages arrive on a websocket-sharp
-///     worker thread and are executed on LiveSplit's UI thread.
+///     One connected WebSocket client. Messages arrive on a websocket-sharp worker
+///     thread and are executed on LiveSplit's UI thread.
 /// </summary>
-internal sealed class ClientSession : WebSocketBehavior
+public sealed class ClientSession : WebSocketBehavior, ISessionControl
 {
-    private readonly LiveSplitState state;
-    private readonly ITimerModel model;
-    private readonly Settings settings;
-    private readonly IUiDispatcher dispatcher;
-
-    public ClientSession(LiveSplitState state, ITimerModel model, Settings settings, IUiDispatcher dispatcher)
+    /// <summary>
+    ///     Actions of protocol version 1. Version 1 clients keep receiving exactly what they used to
+    ///     for them: a reply to "hi" and "state" only.
+    /// </summary>
+    private static readonly HashSet<string> LegacyActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        this.state = state;
-        this.model = model;
-        this.settings = settings;
-        this.dispatcher = dispatcher;
+        "hi", "state", "startorsplit", "split", "unsplit", "skipsplit", "pause", "resume",
+        "reset", "starttimer", "pausegametime", "unpausegametime",
+    };
+
+    private readonly ServerRuntime runtime;
+
+    // Written on the UI thread, read on websocket-sharp threads.
+    private volatile int protocolVersion = Versions.Legacy;
+
+    public int ProtocolVersion
+    {
+        get => protocolVersion;
+        set => protocolVersion = value;
     }
+
+    public SessionSubscription Subscription { get; } = new();
+
+    /// <summary>
+    ///     When the last tick was sent. Only used on the UI thread.
+    /// </summary>
+    internal DateTime LastTick { get; set; }
+
+    public ClientSession(ServerRuntime runtime)
+    {
+        this.runtime = runtime;
+    }
+
+    public bool IsOpen => State == WebSocketState.Open;
 
     protected override void OnOpen()
     {
-        Reply(dispatcher.InvokeAsync(() =>
+        string requested = Context.QueryString?["protocol"];
+        if (requested != null
+            && int.TryParse(requested, NumberStyles.Integer, CultureInfo.InvariantCulture, out int version)
+            && Versions.IsSupported(version))
         {
-            dynamic jsonData = new DynamicJsonObject();
-            jsonData.open = new DynamicJsonObject();
-            jsonData.open.response = "success";
-            jsonData.state = JsonState.Create(state);
-            return (string)jsonData.ToString();
+            ProtocolVersion = version;
+        }
+
+        Reply(runtime.Dispatcher.InvokeAsync(() =>
+        {
+            if (ProtocolVersion == Versions.Legacy)
+            {
+                return Json.Serialize(new
+                {
+                    open = new { response = "success" },
+                    state = runtime.Snapshots.Build(runtime.State, SnapshotOptions.Legacy),
+                });
+            }
+
+            return Json.Serialize(SessionCommands.CreateHello(new CommandContext(runtime, this), includeState: true));
         }));
     }
 
     protected override void OnMessage(MessageEventArgs e)
     {
-        string action = ParseAction(e.Data);
-        Reply(dispatcher.InvokeAsync(() => Execute(action)));
-    }
+        if (!e.IsText)
+        {
+            return;
+        }
 
-    private static string ParseAction(string message)
-    {
+        Request request;
         try
         {
-            dynamic messageData = JSON.FromString(message);
-            if (messageData is DynamicJsonObject)
-            {
-                return messageData.action as string;
-            }
+            request = Request.Parse(e.Data);
         }
-        catch (Exception)
+        catch (RequestParseException parseError)
         {
-            // Not JSON: the whole message is the action.
+            if (ProtocolVersion != Versions.Legacy)
+            {
+                SendText(Json.Serialize(ResponseMessage.Failure(parseError.Id, null, ErrorCodes.InvalidRequest, parseError.Message)));
+            }
+
+            return;
         }
 
-        return message?.Trim();
+        Reply(runtime.Dispatcher.InvokeAsync(() => Execute(request)).ContinueWith(task =>
+        {
+            if (task.Status == TaskStatus.RanToCompletion)
+            {
+                return task.Result;
+            }
+
+            // The UI thread was not reachable.
+            Exception error = task.Exception?.GetBaseException();
+            return ProtocolVersion == Versions.Legacy && LegacyActions.Contains(request.Action)
+                ? null
+                : Json.Serialize(ResponseMessage.Failure(request.Id, request.Action, ErrorCodes.Unavailable, error?.Message ?? "LiveSplit is not available."));
+        }, TaskScheduler.Default));
     }
 
-    private string Execute(string action)
+    /// <summary>
+    ///     Runs the request on the UI thread and returns the message to send back, if any.
+    /// </summary>
+    private string Execute(Request request)
     {
-        dynamic jsonData = new DynamicJsonObject();
-        jsonData.response = new DynamicJsonObject();
-        jsonData.response.response = action;
+        // Captured before running: "hello" changes the protocol of the session.
+        bool legacy = ProtocolVersion == Versions.Legacy && LegacyActions.Contains(request.Action);
 
-        switch (action)
+        object data;
+        try
+        {
+            data = runtime.Commands.Execute(new CommandContext(runtime, this), request);
+        }
+        catch (CommandException error)
+        {
+            return legacy ? null : Json.Serialize(ResponseMessage.Failure(request.Id, request.Action, error.Code, error.Message));
+        }
+        catch (Exception error)
+        {
+            LsLog.Error(error);
+            return legacy ? null : Json.Serialize(ResponseMessage.Failure(request.Id, request.Action, ErrorCodes.Internal, error.Message));
+        }
+
+        if (!legacy)
+        {
+            return Json.Serialize(ResponseMessage.Success(request, data));
+        }
+
+        switch (request.Action)
         {
             case "hi":
-                return jsonData.ToString();
+                return Json.Serialize(new { response = new { response = "hi" } });
             case "state":
-                jsonData.state = JsonState.Create(state);
-                return jsonData.ToString();
+                return Json.Serialize(new { response = new { response = "state" }, state = data });
+            default:
+                // Protocol version 1 never replied to control actions.
+                return null;
         }
-
-        if (settings.ReadOnly)
-        {
-            return null;
-        }
-
-        switch (action)
-        {
-            case "startorsplit":
-                if (state.CurrentPhase == TimerPhase.Running)
-                {
-                    model.Split();
-                }
-                else
-                {
-                    model.Start();
-                }
-
-                break;
-            case "split":
-                model.Split();
-                break;
-            case "unsplit":
-                model.UndoSplit();
-                break;
-            case "skipsplit":
-                model.SkipSplit();
-                break;
-            case "pause":
-                if (state.CurrentPhase != TimerPhase.Paused)
-                {
-                    model.Pause();
-                }
-
-                break;
-            case "resume":
-                if (state.CurrentPhase == TimerPhase.Paused)
-                {
-                    model.Pause();
-                }
-
-                break;
-            case "reset":
-                model.Reset();
-                break;
-            case "starttimer":
-                model.Start();
-                break;
-            case "pausegametime":
-                state.IsGameTimePaused = true;
-                break;
-            case "unpausegametime":
-                state.IsGameTimePaused = false;
-                break;
-        }
-
-        return null;
     }
 
-    private void Reply(Task<string> response)
+    private void Reply(Task<string> message)
     {
-        response.ContinueWith(task =>
+        message.ContinueWith(task =>
         {
-            if (task.Status == TaskStatus.RanToCompletion && task.Result != null && State == WebSocketState.Open)
+            if (task.Status == TaskStatus.RanToCompletion && task.Result != null)
             {
-                SendAsync(task.Result, null);
+                SendText(task.Result);
+            }
+            else if (task.IsFaulted)
+            {
+                LsLog.Error(task.Exception.GetBaseException());
             }
         }, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    ///     Queues a text message without blocking the caller. Safe to call from any thread.
+    /// </summary>
+    internal void SendText(string message)
+    {
+        if (!IsOpen)
+        {
+            return;
+        }
+
+        try
+        {
+            SendAsync(message, null);
+        }
+        catch (InvalidOperationException)
+        {
+            // The connection closed in the meantime.
+        }
     }
 }

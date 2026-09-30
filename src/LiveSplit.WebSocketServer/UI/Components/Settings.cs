@@ -1,4 +1,5 @@
-﻿using System;
+﻿using LiveSplit.WsServer.Commands;
+using System;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -7,7 +8,7 @@ using System.Xml;
 
 namespace LiveSplit.UI.Components
 {
-    public partial class Settings : UserControl
+    public partial class Settings : UserControl, IServerOptions
     {
         public const ushort DefaultPort = 15721;
 
@@ -16,6 +17,8 @@ namespace LiveSplit.UI.Components
         public ushort Port { get; set; }
 
         public bool ReadOnly { get; set; }
+
+        public bool AllowFileCommands { get; set; }
 
         public string LocalIP { get; set; }
 

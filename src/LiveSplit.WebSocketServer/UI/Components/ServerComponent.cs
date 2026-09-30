@@ -1,15 +1,15 @@
 using LiveSplit.Model;
 using LiveSplit.Options;
-using LiveSplit.Web;
+using LiveSplit.WsServer.Commands;
 using LiveSplit.WsServer.Infrastructure;
 using LiveSplit.WsServer.Server;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Net;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
-using WebSocketSharp.Server;
 
 namespace LiveSplit.UI.Components;
 
@@ -19,7 +19,7 @@ public class ServerComponent : IComponent
     private const string StopMenuText = "Stop WebSocket Server (JSON)";
 
     public Settings Settings { get; set; }
-    public WebSocketServer Server { get; set; }
+    public WebSocketHost Host { get; }
 
     protected System.Timers.Timer Timer { get; set; }
     protected IUiDispatcher Dispatcher { get; set; }
@@ -51,6 +51,10 @@ public class ServerComponent : IComponent
 
         Model.CurrentState = State;
 
+        var runtime = new ServerRuntime(State, Model, Dispatcher, null, Settings, CommandDispatcher.CreateDefault(),
+            typeof(ServerComponent).Assembly.GetName().Version.ToString(3));
+        Host = new WebSocketHost(runtime);
+
         State.OnSplit += State_OnSplit;
         State.OnUndoSplit += State_OnUndoSplit;
         State.OnSkipSplit += State_OnSkipSplit;
@@ -78,16 +82,13 @@ public class ServerComponent : IComponent
 
         try
         {
-            var server = new WebSocketServer(Settings.Port);
-            server.AddWebSocketService("/", () => new ClientSession(State, Model, Settings, Dispatcher));
-            server.Start();
-            Server = server;
+            Host.Start(IPAddress.Any, Settings.Port);
         }
         catch (Exception e)
         {
             Log.Error(e);
             Log.Error($"[WebSocket Server] Could not start the server on port {Settings.Port}.");
-            Server = null;
+            Host.Stop();
 
             if (showErrors)
             {
@@ -127,25 +128,13 @@ public class ServerComponent : IComponent
             Timer = null;
         }
 
-        if (Server != null)
-        {
-            WebSocketServer server = Server;
-            Server = null;
-            try
-            {
-                server.Stop();
-            }
-            catch (Exception e)
-            {
-                Log.Error(e);
-            }
-        }
+        Host.Stop();
     }
 
     private void UpdateContextMenu()
     {
         ContextMenuControls.Clear();
-        if (Server == null)
+        if (Host?.IsRunning != true)
         {
             ContextMenuControls.Add(StartMenuText, Start);
         }
@@ -184,12 +173,12 @@ public class ServerComponent : IComponent
     public void SetSettings(XmlNode settings)
     {
         Settings.SetSettings(settings);
-        if (Server == null && Settings.AutoStart)
+        if (!Host.IsRunning && Settings.AutoStart)
         {
             // The layout is loaded before the main form is fully shown, so start a little later.
             Task.Delay(500).ContinueWith(_ => Dispatcher.Post(() =>
             {
-                if (!disposed && Server == null)
+                if (!disposed && !Host.IsRunning)
                 {
                     StartServer(showErrors: false);
                 }
@@ -207,20 +196,10 @@ public class ServerComponent : IComponent
         // so the state is always read on the UI thread.
         Dispatcher.Post(() =>
         {
-            WebSocketServer server = Server;
-            if (server == null)
+            if (Host.IsRunning)
             {
-                return;
+                Host.Broadcast(action, data);
             }
-
-            dynamic jsonData = new DynamicJsonObject();
-            jsonData.action = new DynamicJsonObject();
-            jsonData.action.action = action;
-            jsonData.action.data = data;
-            jsonData.state = JsonState.Create(State);
-            string message = jsonData.ToString();
-
-            server.WebSocketServices["/"].Sessions.BroadcastAsync(message, null);
         });
     }
 
