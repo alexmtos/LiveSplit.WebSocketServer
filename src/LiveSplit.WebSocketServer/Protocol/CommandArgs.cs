@@ -1,6 +1,8 @@
 using LiveSplit.Model;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 
 namespace LiveSplit.WsServer.Protocol;
@@ -179,6 +181,31 @@ public sealed class CommandArgs
         {
             throw CommandException.InvalidArgs($"Argument '{name}' is not a valid time: {text}");
         }
+    }
+
+    /// <summary>
+    ///     Reads a list of strings from a JSON array, or from a comma separated string.
+    /// </summary>
+    public IReadOnlyList<string> GetStringList(string name, int position = 0)
+    {
+        if (TryGet(name, position, out JsonElement value) && value.ValueKind == JsonValueKind.Array)
+        {
+            var list = new List<string>();
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    throw CommandException.InvalidArgs($"Argument '{name}' must be a list of strings.");
+                }
+
+                list.Add(item.GetString());
+            }
+
+            return list;
+        }
+
+        string text = GetString(name, position);
+        return text?.Split([','], StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
     }
 
     public TimeSpan RequireTime(string name, int position = 0)

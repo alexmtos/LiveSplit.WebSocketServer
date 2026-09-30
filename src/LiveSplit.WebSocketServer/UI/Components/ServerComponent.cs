@@ -4,6 +4,7 @@ using LiveSplit.WsServer.Commands;
 using LiveSplit.WsServer.Infrastructure;
 using LiveSplit.WsServer.Interop;
 using LiveSplit.WsServer.Server;
+using LiveSplit.WsServer.State;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -38,6 +39,7 @@ public class ServerComponent : IComponent
     public IDictionary<string, Action> ContextMenuControls { get; protected set; }
 
     private bool disposed;
+    private StateChangeDetector changeDetector = new();
 
     public ServerComponent(LiveSplitState state)
     {
@@ -102,12 +104,19 @@ public class ServerComponent : IComponent
             return;
         }
 
-        Timer = new System.Timers.Timer(15000)
+        // Changes that happened while the server was stopped are not events.
+        changeDetector = new StateChangeDetector();
+        changeDetector.Detect(State);
+
+        if (Settings.RefreshInterval > 0)
         {
-            AutoReset = true
-        };
-        Timer.Elapsed += Timer_Elapsed;
-        Timer.Start();
+            Timer = new System.Timers.Timer(Settings.RefreshInterval * 1000.0)
+            {
+                AutoReset = true
+            };
+            Timer.Elapsed += Timer_Elapsed;
+            Timer.Start();
+        }
 
         UpdateContextMenu();
     }
@@ -189,6 +198,26 @@ public class ServerComponent : IComponent
 
     public void Update(IInvalidator invalidator, LiveSplitState state, float width, float height, LayoutMode mode)
     {
+        // Called every frame on the UI thread.
+        if (!Host.IsRunning)
+        {
+            return;
+        }
+
+        try
+        {
+            foreach (StateChangeDetector.Change change in changeDetector.Detect(State))
+            {
+                Host.Broadcast(change.Event, change.Data);
+            }
+
+            Host.SendTicks(DateTime.UtcNow);
+        }
+        catch (Exception e)
+        {
+            // Never break LiveSplit's drawing loop.
+            Log.Error(e);
+        }
     }
 
     private void SendState(string action, object data)
@@ -206,22 +235,22 @@ public class ServerComponent : IComponent
 
     private void Timer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
     {
-        SendState("refresh", null);
+        SendState(ServerEvents.Refresh, null);
     }
 
     private void State_OnSplit(object sender, EventArgs e)
     {
-        SendState("split", null);
+        SendState(ServerEvents.Split, null);
     }
 
     private void State_OnUndoSplit(object sender, EventArgs e)
     {
-        SendState("undo-split", null);
+        SendState(ServerEvents.UndoSplit, null);
     }
 
     private void State_OnSkipSplit(object sender, EventArgs e)
     {
-        SendState("skip-split", null);
+        SendState(ServerEvents.SkipSplit, null);
     }
 
     private void State_OnStart(object sender, EventArgs e)
@@ -231,57 +260,57 @@ public class ServerComponent : IComponent
             State.IsGameTimePaused = true;
         }
 
-        SendState("start", null);
+        SendState(ServerEvents.Start, null);
     }
 
     private void State_OnReset(object sender, TimerPhase value)
     {
-        SendState("reset", null);
+        SendState(ServerEvents.Reset, null);
     }
 
     private void State_OnPause(object sender, EventArgs e)
     {
-        SendState("pause", null);
+        SendState(ServerEvents.Pause, null);
     }
 
     private void State_OnUndoAllPauses(object sender, EventArgs e)
     {
-        SendState("undo-all-pauses", null);
+        SendState(ServerEvents.UndoAllPauses, null);
     }
 
     private void State_OnResume(object sender, EventArgs e)
     {
-        SendState("resume", null);
+        SendState(ServerEvents.Resume, null);
     }
 
     private void State_OnScrollUp(object sender, EventArgs e)
     {
-        SendState("scroll", "up");
+        SendState(ServerEvents.Scroll, "up");
     }
 
     private void State_OnScrollDown(object sender, EventArgs e)
     {
-        SendState("scroll", "down");
+        SendState(ServerEvents.Scroll, "down");
     }
 
     private void State_OnSwitchComparisonPrevious(object sender, EventArgs e)
     {
-        SendState("switch-comparison", "previous");
+        SendState(ServerEvents.SwitchComparison, "previous");
     }
 
     private void State_OnSwitchComparisonNext(object sender, EventArgs e)
     {
-        SendState("switch-comparison", "next");
+        SendState(ServerEvents.SwitchComparison, "next");
     }
 
     private void State_RunManuallyModified(object sender, EventArgs e)
     {
-        SendState("run-manually-modified", null);
+        SendState(ServerEvents.RunManuallyModified, null);
     }
 
     private void State_ComparisonRenamed(object sender, EventArgs e)
     {
-        SendState("comparison-renamed", null);
+        SendState(ServerEvents.ComparisonRenamed, null);
     }
 
     public void Dispose()

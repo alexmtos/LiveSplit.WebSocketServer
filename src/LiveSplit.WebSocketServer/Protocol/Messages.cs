@@ -1,3 +1,4 @@
+using LiveSplit.WsServer.State;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -60,4 +61,18 @@ public sealed class HelloMessage
     public bool FileCommandsAllowed { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object State { get; set; }
+}
+
+/// <summary>
+///     A lightweight message sent periodically to clients that asked for it with <c>subscribe { tickMs }</c>.
+/// </summary>
+public sealed class TickMessage
+{
+    public string Type => "tick";
+    public string TimerState { get; set; }
+    public TimeDto CurrentTime { get; set; }
+    public int CurrentSplitIndex { get; set; }
+    public long? CurrentDelta { get; set; }
+    public bool IsGameTimePaused { get; set; }
+    public long? LoadingTimes { get; set; }
 }

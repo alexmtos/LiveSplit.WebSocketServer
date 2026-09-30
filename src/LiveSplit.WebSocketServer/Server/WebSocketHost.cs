@@ -1,3 +1,4 @@
+using LiveSplit.Model;
 using LiveSplit.Options;
 using LiveSplit.WsServer.Protocol;
 using LiveSplit.WsServer.State;
@@ -16,15 +17,6 @@ namespace LiveSplit.WsServer.Server;
 public sealed class WebSocketHost : IDisposable
 {
     public const string ServicePath = "/";
-
-    /// <summary>
-    ///     Events that protocol version 1 clients receive, as <c>{ action: { action, data }, state }</c>.
-    /// </summary>
-    public static readonly ISet<string> LegacyEvents = new HashSet<string>
-    {
-        "refresh", "split", "undo-split", "skip-split", "start", "reset", "pause", "undo-all-pauses",
-        "resume", "scroll", "switch-comparison", "run-manually-modified", "comparison-renamed",
-    };
 
     private readonly ServerRuntime runtime;
     private WebSocketServer server;
@@ -122,7 +114,7 @@ public sealed class WebSocketHost : IDisposable
             string message;
             if (session.ProtocolVersion == Versions.Legacy)
             {
-                if (!LegacyEvents.Contains(eventName))
+                if (!ServerEvents.Legacy.Contains(eventName))
                 {
                     continue;
                 }
@@ -158,6 +150,54 @@ public sealed class WebSocketHost : IDisposable
 
             session.SendText(message);
         }
+    }
+
+    /// <summary>
+    ///     Sends a tick to every client whose tick interval has elapsed. Called every frame on the UI thread.
+    /// </summary>
+    public void SendTicks(DateTime now)
+    {
+        string message = null;
+        foreach (ClientSession session in Sessions)
+        {
+            if (session.ProtocolVersion == Versions.Legacy || session.Subscription.TickInterval is not TimeSpan interval)
+            {
+                continue;
+            }
+
+            if (now - session.LastTick < interval)
+            {
+                continue;
+            }
+
+            session.LastTick = now;
+            message ??= Json.Serialize(BuildTick());
+            session.SendText(message);
+        }
+    }
+
+    private TickMessage BuildTick()
+    {
+        LiveSplitState state = runtime.State;
+        TimeSpan? delta = null;
+        try
+        {
+            delta = TimerCalculations.Delta(state, state.CurrentComparison);
+        }
+        catch (Exception)
+        {
+            // The delta is optional.
+        }
+
+        return new TickMessage
+        {
+            TimerState = state.CurrentPhase.ToString(),
+            CurrentTime = TimeDto.From(state.CurrentTime),
+            CurrentSplitIndex = state.CurrentSplitIndex,
+            CurrentDelta = TimeDto.Milliseconds(delta),
+            IsGameTimePaused = state.IsGameTimePaused,
+            LoadingTimes = TimeDto.Milliseconds(state.LoadingTimes),
+        };
     }
 
     public void Dispose()

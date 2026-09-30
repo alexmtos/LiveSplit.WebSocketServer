@@ -20,6 +20,13 @@ namespace LiveSplit.UI.Components
 
         public bool AllowFileCommands { get; set; }
 
+        public const int DefaultRefreshInterval = 15;
+
+        /// <summary>
+        ///     Seconds between "refresh" broadcasts of the full state. 0 disables them.
+        /// </summary>
+        public int RefreshInterval { get; set; }
+
         public string LocalIP { get; set; }
 
         public static string GetIP()
@@ -57,6 +64,7 @@ namespace LiveSplit.UI.Components
             AutoStart = false;
             Port = DefaultPort;
             ReadOnly = false;
+            RefreshInterval = DefaultRefreshInterval;
             LocalIP = GetIP();
             label3.Text = LocalIP;
 
@@ -81,7 +89,8 @@ namespace LiveSplit.UI.Components
         {
             return SettingsHelper.CreateSetting(document, parent, "AutoStart", AutoStart) ^
                 SettingsHelper.CreateSetting(document, parent, "Port", PortString) ^
-                SettingsHelper.CreateSetting(document, parent, "ReadOnly", ReadOnly);
+                SettingsHelper.CreateSetting(document, parent, "ReadOnly", ReadOnly) ^
+                SettingsHelper.CreateSetting(document, parent, "RefreshInterval", RefreshInterval);
         }
 
         public void SetSettings(XmlNode settings)
@@ -89,6 +98,7 @@ namespace LiveSplit.UI.Components
             AutoStart = SettingsHelper.ParseBool(settings["AutoStart"], false);
             PortString = SettingsHelper.ParseString(settings["Port"], DefaultPort.ToString());
             ReadOnly = SettingsHelper.ParseBool(settings["ReadOnly"], false);
+            RefreshInterval = Math.Max(0, SettingsHelper.ParseInt(settings["RefreshInterval"], DefaultRefreshInterval));
         }
     }
 }
