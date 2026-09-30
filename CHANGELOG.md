@@ -4,7 +4,8 @@
 
 ### Compatibility
 
-- Builds against the current LiveSplit (SDK-style project, .NET Framework 4.8.1). `websocket-sharp.dll` is no longer shipped with the component, LiveSplit already includes it.
+- Builds against the current LiveSplit release (SDK-style project, .NET Framework 4.8.1). `websocket-sharp.dll` is no longer shipped with the component, LiveSplit already includes it.
+- The server refuses to start, with an error, when the build was made for another LiveSplit version whose dependencies (`System.Text.Json`) this LiveSplit does not have. Such a build used to accept connections and never send anything.
 - Clients of version 1.x keep working: without `?protocol=2`, the server behaves as before (protocol version 1).
 
 ### Added
@@ -17,7 +18,7 @@
 - `subscribe`/`unsubscribe`: choose events, whether they carry the state, icons and history, and periodic ticks.
 - New state fields: `currentDelta`, `predictedTime`, `bestPossibleTime`, `gameTimePauseTime`, hotkey profiles, `layoutPath`, and in `run`: `customComparisons`, `filePath`, `hasChanged`, `autoSplitter`, custom variables, region/platform names, and on request the attempt and segment history.
 - Settings: network access (this computer only / network), token, allowed web origins, resend interval, file commands, and the URL to connect with.
-- Tests and a GitHub Actions build against the latest LiveSplit.
+- Tests and a GitHub Actions build against the latest LiveSplit release, plus a check against LiveSplit's master.
 
 ### Changed
 
@@ -34,3 +35,4 @@
 - Starting the server on a port in use no longer crashes; the error is shown.
 - An invalid port in the settings, or a computer without IPv4, no longer throws.
 - The periodic refresh could block LiveSplit while the server was stopping.
+- When the greeting cannot be sent, the connection is closed with code 1011 and the reason, instead of staying open without messages.

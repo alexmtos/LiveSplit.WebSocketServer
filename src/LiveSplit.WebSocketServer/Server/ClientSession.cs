@@ -236,21 +236,37 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
     }
 
     /// <summary>
-    ///     Reports that the UI thread could not run the work (LiveSplit is closing).
+    ///     Reports that the work failed: the UI thread could not run it (LiveSplit is closing), or
+    ///     the message could not be built. Without a greeting (request is null) the client would wait
+    ///     forever, so the connection is closed with the reason.
     /// </summary>
     private void CompleteOnFailure(Task<bool> work, Request request)
     {
         work.ContinueWith(task =>
         {
             Exception error = task.Exception?.GetBaseException();
-            if (error is not LiveSplitUnavailableException)
+            bool unavailable = error is LiveSplitUnavailableException;
+            if (!unavailable)
             {
                 LsLog.Error(error);
             }
 
-            if (request != null && !(ProtocolVersion == Versions.Legacy && LegacyActions.Contains(request.Action)))
+            try
             {
-                SendText(Json.Serialize(ResponseMessage.Failure(request.Id, request.Action, ErrorCodes.Unavailable, "LiveSplit is not available.")));
+                if (request == null)
+                {
+                    // Close reasons are limited to 123 bytes.
+                    Context.WebSocket.CloseAsync(CloseStatusCode.ServerError,
+                        unavailable ? "LiveSplit is not available." : "Could not send the state. See LiveSplit's log in the Windows Event Viewer.");
+                }
+                else if (!(ProtocolVersion == Versions.Legacy && LegacyActions.Contains(request.Action)))
+                {
+                    SendText(Json.Serialize(ResponseMessage.Failure(request.Id, request.Action, ErrorCodes.Unavailable, "LiveSplit is not available.")));
+                }
+            }
+            catch (Exception)
+            {
+                // The client is already gone, or no message can be built at all.
             }
         }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
     }

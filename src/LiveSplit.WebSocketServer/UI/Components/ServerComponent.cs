@@ -3,6 +3,7 @@ using LiveSplit.Options;
 using LiveSplit.WsServer.Commands;
 using LiveSplit.WsServer.Infrastructure;
 using LiveSplit.WsServer.Interop;
+using LiveSplit.WsServer.Protocol;
 using LiveSplit.WsServer.Server;
 using LiveSplit.WsServer.State;
 using System;
@@ -82,6 +83,22 @@ public class ServerComponent : IComponent
     {
         CloseAllConnections();
 
+        if (FindMissingDependency() is Exception missing)
+        {
+            Log.Error(missing);
+            Log.Error("[WebSocket Server] This build of the component does not match this LiveSplit version.");
+
+            // Shown even when starting automatically: clients could connect but would never receive anything.
+            MessageBox.Show(State.Form,
+                "This build of the LiveSplit WebSocket Server was made for another LiveSplit version, so the server was not started.\n\n"
+                + "Download the build made for your LiveSplit version, or update LiveSplit.\n\n"
+                + missing.GetBaseException().Message,
+                "LiveSplit WebSocket Server", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            UpdateContextMenu();
+            return;
+        }
+
         try
         {
             Host.Start(Settings.BindAddress, Settings.Port);
@@ -118,6 +135,24 @@ public class ServerComponent : IComponent
         }
 
         UpdateContextMenu();
+    }
+
+    /// <summary>
+    ///     The component uses the copy of System.Text.Json that ships with LiveSplit. A build made
+    ///     against another LiveSplit version can reference a version LiveSplit does not have, and
+    ///     then fails on the first message it sends.
+    /// </summary>
+    private static Exception FindMissingDependency()
+    {
+        try
+        {
+            Json.Serialize(new { check = true });
+            return null;
+        }
+        catch (Exception e)
+        {
+            return e;
+        }
     }
 
     public void Stop()

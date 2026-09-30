@@ -15,10 +15,12 @@ LiveSplit has its own TCP and WebSocket server (Control → Start TCP/WebSocket 
 
 ## Install
 
-This version targets the current LiveSplit (.NET Framework 4.8.1).
+This version targets the current LiveSplit release (.NET Framework 4.8.1).
 
-1. Download `LiveSplit.WebSocketServer.dll` from the releases of this repository (or from the artifact of the latest *Build* workflow run).
+1. Download `LiveSplit.WebSocketServer.dll` from the releases of this repository, or from the `LiveSplit.WebSocketServer-for-LiveSplit-<version>` artifact of the latest *Build* workflow run.
 2. Put it in the `Components` folder of LiveSplit. `websocket-sharp.dll` already ships with LiveSplit; you no longer need to copy it.
+
+The component uses the copy of `System.Text.Json` that ships with LiveSplit, so a build works with the LiveSplit version it was built against and later ones, but not with earlier ones. The *Build* workflow builds against the latest LiveSplit release. When a build does not match, LiveSplit shows an error when the server starts, and the server stays stopped.
 
 ## Setup
 
@@ -66,6 +68,8 @@ The project is built like LiveSplit's own components. Either:
   ```
 
 The LiveSplit checkout needs the `lib/SpeedrunComSharp` submodule. `dotnet test` runs the tests.
+
+Check out a LiveSplit release tag (for example `git checkout 1.8.37`), not `master`: a build against `master` can depend on newer libraries than the released LiveSplit ships, and then does not start there.
 
 ## Testing against a running LiveSplit
 

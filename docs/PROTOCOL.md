@@ -144,6 +144,8 @@ Ticks follow LiveSplit's refresh rate, so they cannot be more frequent than Live
 
 Messages to a client are sent one at a time, in order: the greeting first, then events and responses in the order they happened (an action's response comes after the events it caused). Ticks are skipped while a client has more than a few messages waiting, and a client that stops reading is disconnected once 1000 messages are waiting.
 
+If the greeting cannot be sent (in both protocol versions), the server closes the connection with code 1011 and the reason as the close message, instead of leaving the client waiting. The error is written to LiveSplit's log (Windows Event Viewer → Windows Logs → Application, source "LiveSplit").
+
 ## Protocol version 1
 
 Version 1 behaves exactly as before version 2.0 of this component:
