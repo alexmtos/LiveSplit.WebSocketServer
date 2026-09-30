@@ -67,6 +67,19 @@ The project is built like LiveSplit's own components. Either:
 
 The LiveSplit checkout needs the `lib/SpeedrunComSharp` submodule. `dotnet test` runs the tests.
 
+## Testing against a running LiveSplit
+
+`tools/test_server.py` checks every feature end to end over a real connection: both protocol versions, the state, every query, subscriptions and ticks, the token, origins and read only mode, and, when enabled, the timer, run editing, hotkeys and file actions.
+
+```
+pip install websocket-client
+python tools/test_server.py                    # safe, read only checks
+python tools/test_server.py --all              # also changes LiveSplit, then restores it
+python tools/test_server.py --all --token XYZ --host 192.168.0.10
+```
+
+By default nothing in LiveSplit is changed. `--control` (timer; it must not be running), `--edit-run`, `--hotkeys` and `--files` enable the tests that change LiveSplit; they restore what they change, but the attempt count grows by one and the splits are left marked as modified. Run `python tools/test_server.py --help` for details. The script exits with 1 when a check fails.
+
 ## Credits
 
 Originally created by [MeGotsThis](https://github.com/MeGotsThis/LiveSplit.WebSocketServer).
