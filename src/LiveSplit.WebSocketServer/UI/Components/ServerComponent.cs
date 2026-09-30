@@ -85,7 +85,7 @@ public class ServerComponent : IComponent
 
         try
         {
-            Host.Start(IPAddress.Any, Settings.Port);
+            Host.Start(Settings.BindAddress, Settings.Port);
         }
         catch (Exception e)
         {

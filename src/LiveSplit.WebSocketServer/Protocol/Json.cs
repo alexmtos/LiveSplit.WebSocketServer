@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace LiveSplit.WsServer.Protocol;
 
-internal static class Json
+public static class Json
 {
     public static readonly JsonSerializerOptions Options = new()
     {

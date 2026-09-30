@@ -48,15 +48,81 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
     /// </summary>
     internal DateTime LastTick { get; set; }
 
+    // Set once in OnOpen, before any message is processed.
+    private volatile bool authorized;
+
     public ClientSession(ServerRuntime runtime)
     {
         this.runtime = runtime;
+
+        // Browsers send the page's origin; other clients usually send none.
+        OriginValidator = origin => IsOriginAllowed(runtime.Options.AllowedOriginList, origin);
     }
 
-    public bool IsOpen => State == WebSocketState.Open;
+    public static bool IsOriginAllowed(IReadOnlyCollection<string> allowedOrigins, string origin)
+    {
+        if (allowedOrigins == null || allowedOrigins.Count == 0 || string.IsNullOrEmpty(origin))
+        {
+            return true;
+        }
+
+        string normalized = origin.Trim().TrimEnd('/');
+        foreach (string allowed in allowedOrigins)
+        {
+            if (allowed == "*" || string.Equals(allowed, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static bool IsTokenValid(string expected, string provided)
+    {
+        if (string.IsNullOrEmpty(expected))
+        {
+            return true;
+        }
+
+        if (provided == null || provided.Length != expected.Length)
+        {
+            return false;
+        }
+
+        // Constant time comparison.
+        int difference = 0;
+        for (int i = 0; i < expected.Length; i++)
+        {
+            difference |= expected[i] ^ provided[i];
+        }
+
+        return difference == 0;
+    }
+
+    public bool IsOpen => authorized && State == WebSocketState.Open;
 
     protected override void OnOpen()
     {
+        if (!IsTokenValid(runtime.Options.AuthToken, Context.QueryString?["token"]))
+        {
+            string error = Json.Serialize(ResponseMessage.Failure(null, null, ErrorCodes.Unauthorized,
+                "A valid token is required. Connect with ?token=... (see the component settings)."));
+            try
+            {
+                Send(error);
+                Context.WebSocket.Close(CloseStatusCode.PolicyViolation, "Unauthorized");
+            }
+            catch (Exception)
+            {
+                // The client is already gone.
+            }
+
+            return;
+        }
+
+        authorized = true;
+
         string requested = Context.QueryString?["protocol"];
         if (requested != null
             && int.TryParse(requested, NumberStyles.Integer, CultureInfo.InvariantCulture, out int version)
@@ -82,7 +148,7 @@ public sealed class ClientSession : WebSocketBehavior, ISessionControl
 
     protected override void OnMessage(MessageEventArgs e)
     {
-        if (!e.IsText)
+        if (!authorized || !e.IsText)
         {
             return;
         }
