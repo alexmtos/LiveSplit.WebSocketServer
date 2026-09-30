@@ -2,6 +2,7 @@ using LiveSplit.Model;
 using LiveSplit.Options;
 using LiveSplit.WsServer.Commands;
 using LiveSplit.WsServer.Infrastructure;
+using LiveSplit.WsServer.Interop;
 using LiveSplit.WsServer.Server;
 using System;
 using System.Collections.Generic;
@@ -51,7 +52,7 @@ public class ServerComponent : IComponent
 
         Model.CurrentState = State;
 
-        var runtime = new ServerRuntime(State, Model, Dispatcher, null, Settings, CommandDispatcher.CreateDefault(),
+        var runtime = new ServerRuntime(State, Model, Dispatcher, new TimerFormBridge(state.Form), Settings, CommandDispatcher.CreateDefault(),
             typeof(ServerComponent).Assembly.GetName().Version.ToString(3));
         Host = new WebSocketHost(runtime);
 
@@ -225,6 +226,11 @@ public class ServerComponent : IComponent
 
     private void State_OnStart(object sender, EventArgs e)
     {
+        if (Host.Runtime.AlwaysPauseGameTime)
+        {
+            State.IsGameTimePaused = true;
+        }
+
         SendState("start", null);
     }
 

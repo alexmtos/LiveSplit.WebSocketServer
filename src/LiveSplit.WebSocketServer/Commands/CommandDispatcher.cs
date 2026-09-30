@@ -76,6 +76,10 @@ public sealed class CommandDispatcher
         var dispatcher = new CommandDispatcher();
         SessionCommands.Register(dispatcher);
         TimerCommands.Register(dispatcher);
+        RunCommands.Register(dispatcher);
+        HotkeyCommands.Register(dispatcher);
+        FileCommands.Register(dispatcher);
+        QueryCommands.Register(dispatcher);
         return dispatcher;
     }
 }
