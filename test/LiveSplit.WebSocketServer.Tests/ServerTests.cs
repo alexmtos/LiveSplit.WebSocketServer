@@ -146,10 +146,15 @@ public sealed class ServerTests : IDisposable
         Assert.Equal("state", state.GetProperty("response").GetProperty("response").GetString());
         Assert.Equal("NotRunning", state.GetProperty("state").GetProperty("timerState").GetString());
 
-        // Control actions are not answered in protocol 1, and failures are silent.
+        // Control actions are not answered in protocol 1, and failures are silent. Messages are
+        // processed in order, so the answer to the ping (an action added in version 2) comes
+        // after both actions ran, and must be the next message.
         client.Send("split");
         client.Send("starttimer");
-        Assert.True(client.NothingReceived(TimeSpan.FromMilliseconds(300)));
+        client.Send("{\"action\": \"ping\"}");
+        JsonElement pong = client.Receive();
+        Assert.Equal("response", Type(pong));
+        Assert.Equal("pong", pong.GetProperty("data").GetString());
         Assert.Equal(TimerPhase.Running, ls.State.CurrentPhase);
     }
 
