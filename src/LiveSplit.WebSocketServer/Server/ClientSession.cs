@@ -1,16 +1,14 @@
-using LsLog = LiveSplit.Options.Log;
 using LiveSplit.WsServer.Commands;
-using LiveSplit.WsServer.Infrastructure;
 using LiveSplit.WsServer.Protocol;
 using LiveSplit.WsServer.State;
-using Versions = LiveSplit.WsServer.Protocol.ProtocolVersion;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Text.Json;
 using System.Threading.Tasks;
 using WebSocketSharp;
 using WebSocketSharp.Server;
+using LsLog = LiveSplit.Options.Log;
+using Versions = LiveSplit.WsServer.Protocol.ProtocolVersion;
 
 namespace LiveSplit.WsServer.Server;
 
