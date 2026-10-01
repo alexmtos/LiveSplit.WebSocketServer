@@ -58,6 +58,8 @@ See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the complete protocol, the state fo
 
 ## Building
 
+[CLAUDE.md](CLAUDE.md) is the contributor guide: architecture, the rules the code relies on (UI thread, message order, protocol version 1 compatibility), how to add actions, events, state fields and settings, and how to build and test on Windows and Linux.
+
 The project is built like LiveSplit's own components. Either:
 
 - Clone this repository into `components/LiveSplit.WebSocketServer` of a LiveSplit checkout and run `dotnet build LiveSplit.WebSocketServer.slnx` there, or
