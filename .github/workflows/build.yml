@@ -1,0 +1,103 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly build against LiveSplit's master to catch upstream API changes early.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      livesplit-ref:
+        description: "LiveSplit branch, tag or commit to build the component against (default: latest release)"
+        required: false
+        default: ""
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The component uses LiveSplit's own copies of its dependencies (System.Text.Json...),
+        # so the DLL people download must be built against the LiveSplit they run: the latest release.
+        # The master build only checks that the component still compiles against upcoming changes.
+        livesplit: [release, master]
+
+    # A break on LiveSplit's master must not block the release build.
+    continue-on-error: ${{ matrix.livesplit == 'master' }}
+
+    name: Build (LiveSplit ${{ matrix.livesplit }})
+
+    steps:
+      - name: Resolve LiveSplit version
+        id: livesplit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.livesplit }}
+          REQUESTED: ${{ github.event.inputs.livesplit-ref }}
+        run: |
+          if [ "$TARGET" = master ]; then
+            ref=master
+          elif [ -n "$REQUESTED" ]; then
+            ref="$REQUESTED"
+          else
+            ref=$(gh release view --repo LiveSplit/LiveSplit --json tagName --jq .tagName)
+          fi
+          echo "Building against LiveSplit $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "name=${ref//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout LiveSplit
+        uses: actions/checkout@v4
+        with:
+          repository: LiveSplit/LiveSplit
+          ref: ${{ steps.livesplit.outputs.ref }}
+          path: LiveSplit
+
+      - name: Checkout LiveSplit dependencies
+        working-directory: LiveSplit
+        run: git submodule update --init --depth 1 lib/SpeedrunComSharp
+
+      # The component is checked out where LiveSplit expects its components,
+      # so the Directory.Build.props of LiveSplit provides LsSrcPath/LsLibPath.
+      - name: Checkout component
+        uses: actions/checkout@v4
+        with:
+          path: LiveSplit/components/LiveSplit.WebSocketServer
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build
+        working-directory: LiveSplit/components/LiveSplit.WebSocketServer
+        run: dotnet build LiveSplit.WebSocketServer.slnx -c Release
+
+      - name: Test
+        working-directory: LiveSplit/components/LiveSplit.WebSocketServer
+        run: dotnet test LiveSplit.WebSocketServer.slnx -c Release --no-build
+
+      # The output folder differs between LiveSplit versions.
+      - name: Collect component
+        if: matrix.livesplit == 'release'
+        shell: bash
+        env:
+          REF: ${{ steps.livesplit.outputs.ref }}
+        run: |
+          dll=$(find LiveSplit -path '*/Components/LiveSplit.WebSocketServer.dll' -not -path '*/obj/*' | head -n 1)
+          test -n "$dll" || { echo "LiveSplit.WebSocketServer.dll not found"; exit 1; }
+          mkdir -p upload
+          cp "$dll" upload/
+          echo "Built for LiveSplit $REF" > upload/LIVESPLIT_VERSION.txt
+
+      - name: Upload component
+        if: matrix.livesplit == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiveSplit.WebSocketServer-for-LiveSplit-${{ steps.livesplit.outputs.name }}
+          path: upload/
+          if-no-files-found: error

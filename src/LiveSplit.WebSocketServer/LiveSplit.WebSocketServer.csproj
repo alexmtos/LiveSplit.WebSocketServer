@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>LiveSplit</RootNamespace>
+    <UseWindowsForms>true</UseWindowsForms>
+    <TargetFramework>net4.8.1</TargetFramework>
+
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+
+    <Version>2.0.0</Version>
+    <Product>LiveSplit WebSocket Server</Product>
+    <Description>A LiveSplit component that exposes the full timer state and control over a WebSocket server.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(LsSrcPath)/LiveSplit.Core/LiveSplit.Core.csproj" Private="false" ExcludeAssets="runtime" />
+    <ProjectReference Include="$(LsSrcPath)/UpdateManager/UpdateManager.csproj" Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shipped with LiveSplit itself, so it must not be copied next to the component. -->
+    <PackageReference Include="WebSocketSharp" Version="1.0.3-rc11" ExcludeAssets="runtime" />
+    <PackageReference Include="PolySharp" Version="1.16.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+  </ItemGroup>
+
+</Project>
