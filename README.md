@@ -86,6 +86,10 @@ python tools/test_server.py --all --token XYZ --host 192.168.0.10
 
 By default nothing in LiveSplit is changed. `--control` (timer; it must not be running), `--edit-run`, `--hotkeys` and `--files` enable the tests that change LiveSplit; they restore what they change, but the attempt count grows by one and the splits are left marked as modified. Run `python tools/test_server.py --help` for details. The script exits with 1 when a check fails.
 
+## Releases
+
+Releases are published automatically: when master builds successfully with a new `<Version>` in the project file, GitHub Actions tags the commit and publishes the DLL built against the latest LiveSplit release, with the matching CHANGELOG section as release notes. See [CLAUDE.md](CLAUDE.md#releasing) for the steps.
+
 ## Credits
 
 Originally created by [MeGotsThis](https://github.com/MeGotsThis/LiveSplit.WebSocketServer).

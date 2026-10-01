@@ -1,0 +1,152 @@
+name: Release
+
+# Publishes a GitHub release whenever master builds successfully with a version that has no release yet.
+#
+# To release: bump <Version> in src/LiveSplit.WebSocketServer/LiveSplit.WebSocketServer.csproj, add a
+# "## <version>" section to CHANGELOG.md and push to master. After the Build workflow succeeds, this
+# workflow tags the commit, and attaches the DLL that Build made against the latest LiveSplit release.
+# Versions with a suffix (2.1.0-beta.1) are published as pre-releases.
+
+on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "ID of the Build run to publish (default: the latest successful Build of master)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Only builds of pushes to master; pull request builds never publish anything.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve the build to publish
+        id: build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          REQUESTED_RUN: ${{ github.event.inputs.run-id }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if [ -n "$REQUESTED_RUN" ]; then
+              RUN_ID="$REQUESTED_RUN"
+              HEAD_SHA=$(gh run view "$RUN_ID" --repo "$REPO" --json headSha --jq .headSha)
+            else
+              read -r RUN_ID HEAD_SHA < <(gh run list --repo "$REPO" --workflow build.yml --branch master \
+                --event push --status success --limit 1 --json databaseId,headSha --jq '.[0] | "\(.databaseId) \(.headSha)"')
+            fi
+          fi
+          test -n "$RUN_ID" && test -n "$HEAD_SHA" || { echo "::error::No successful Build run found."; exit 1; }
+          echo "Publishing Build run $RUN_ID of commit $HEAD_SHA"
+          echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.build.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/LiveSplit.WebSocketServer/LiveSplit.WebSocketServer.csproj | head -n 1)
+          test -n "$version" || { echo "::error::No <Version> in the project file."; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/$version" > /dev/null || gh release view "$version" > /dev/null 2>&1; then
+            echo "Version $version is already released; bump <Version> to publish a new release."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version $version has no release yet."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          case "$version" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT";; *) echo "prerelease=false" >> "$GITHUB_OUTPUT";; esac
+
+      - name: Download the component built by Build
+        if: steps.version.outputs.exists == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.build.outputs.run-id }}
+          github-token: ${{ github.token }}
+          pattern: LiveSplit.WebSocketServer-for-LiveSplit-*
+          merge-multiple: true
+          path: dist
+
+      - name: Prepare release files and notes
+        if: steps.version.outputs.exists == 'false'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f dist/LiveSplit.WebSocketServer.dll || { echo "::error::The Build run has no component artifact."; exit 1; }
+          livesplit=$(sed -n 's/^Built for LiveSplit //p' dist/LIVESPLIT_VERSION.txt)
+
+          # The CHANGELOG section of this version, without its heading.
+          awk -v version="$VERSION" '
+            /^## / { if (found) exit; found = ($2 == version); next }
+            found { print }
+          ' CHANGELOG.md > changes.md
+          if ! grep -q '[^[:space:]]' changes.md; then
+            echo "::error::CHANGELOG.md has no '## $VERSION' section. Add one to describe the release."
+            exit 1
+          fi
+
+          {
+            echo "Built for **LiveSplit $livesplit** and later versions."
+            echo
+            echo "### Install"
+            echo
+            echo "Put \`LiveSplit.WebSocketServer.dll\` in the \`Components\` folder of LiveSplit, then add *Control → LiveSplit WebSocket Server* to the layout. See the [README](https://github.com/${GITHUB_REPOSITORY}/blob/${VERSION}/README.md) and the [protocol](https://github.com/${GITHUB_REPOSITORY}/blob/${VERSION}/docs/PROTOCOL.md)."
+            echo
+            cat changes.md
+          } > notes.md
+
+          mkdir -p release
+          cp dist/LiveSplit.WebSocketServer.dll release/
+          (cd dist && zip -q "../release/LiveSplit.WebSocketServer-${VERSION}.zip" LiveSplit.WebSocketServer.dll LIVESPLIT_VERSION.txt)
+          ls -l release
+          cat notes.md
+
+      - name: Publish release
+        if: steps.version.outputs.exists == 'false'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.build.outputs.sha }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          gh release create "$VERSION" release/* \
+            --target "$SHA" \
+            --title "LiveSplit WebSocket Server $VERSION" \
+            --notes-file notes.md \
+            "${flags[@]}"

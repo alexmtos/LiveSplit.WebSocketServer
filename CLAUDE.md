@@ -28,6 +28,7 @@ src/LiveSplit.WebSocketServer/
 test/LiveSplit.WebSocketServer.Tests/   xUnit tests with a real LiveSplitState/TimerModel and real WebSocket connections
 tools/test_server.py             End-to-end test script against a running LiveSplit (websocket-client)
 .github/workflows/build.yml      CI: build + test on Windows against the latest LiveSplit release and LiveSplit master
+.github/workflows/release.yml    Publishes a GitHub release when master builds with a version that has no release yet
 ```
 
 Namespaces: new code lives in `LiveSplit.WsServer.*` (not `LiveSplit.WebSocketServer.*`, which would clash with websocket-sharp's `WebSocketServer` class). The LiveSplit-facing classes stay in `LiveSplit.UI.Components`, as LiveSplit expects.
@@ -91,6 +92,16 @@ Tests build a real `LiveSplitState` without a window (`TestLiveSplit`). Do not u
 **Add a state field**: add it to the DTOs in `State/StateSnapshot.cs` and fill it in `StateSnapshotBuilder` (UI thread, no blocking calls; wrap fragile calculations in `Safe`). Never rename or remove existing fields. Document it in docs/PROTOCOL.md.
 
 **Add a setting**: property on `Settings`, a control in `Settings.Designer.cs`, `GetSettings`/`SetSettings`/`GetSettingsHashCode` in `Settings.cs`. Choose the default for missing XML so that existing layouts keep their old behavior (see `BindMode`). Expose it to commands through `IServerOptions` if needed.
+
+## Releasing
+
+Releases are automatic. To publish version X.Y.Z:
+
+1. Set `<Version>X.Y.Z</Version>` in `src/LiveSplit.WebSocketServer/LiveSplit.WebSocketServer.csproj` (semantic versioning; tags have no `v` prefix, like the existing `1.1.0`).
+2. Add a `## X.Y.Z` section to CHANGELOG.md. The release fails without it, since its text becomes the release notes.
+3. Push to master (directly or by merging a pull request).
+
+When the *Build* workflow succeeds on that push, *Release* (`.github/workflows/release.yml`) sees that no `X.Y.Z` tag exists yet, downloads the DLL that *Build* made against the latest LiveSplit release, creates the tag on the built commit and publishes the release with `LiveSplit.WebSocketServer.dll` and `LiveSplit.WebSocketServer-X.Y.Z.zip` (DLL + `LIVESPLIT_VERSION.txt`). Pushes that keep the version do nothing. Versions with a suffix (`2.1.0-beta.1`) become pre-releases. To publish a specific Build run again by hand (for example after deleting a broken release), run *Release* from the Actions tab with that run's id.
 
 ## Conventions
 
