@@ -116,6 +116,8 @@ jobs:
             echo "::error::CHANGELOG.md has no '## $VERSION' section. Add one to describe the release."
             exit 1
           fi
+          # Relative links of the repository (](docs/PROTOCOL.md)) point to the files of this release.
+          sed -i -E "s#\]\((\./)?([^):/#][^):]*)\)#](https://github.com/${GITHUB_REPOSITORY}/blob/${VERSION}/\2)#g" changes.md
 
           {
             echo "Built for **LiveSplit $livesplit** and later versions."
